@@ -1,15 +1,36 @@
 import { type ClientSchema, a, defineData } from "@aws-amplify/backend";
 
 /*== STEP 1 ===============================================================
-The section below creates a Todo database table with a "content" field. Try
-adding a new "isDone" field as a boolean. The authorization rule below
-specifies that any user authenticated via an API key can "create", "read",
-"update", and "delete" any "Todo" records.
+The schema below defines the data models for your application.
+The authorization rules determine who can access what data.
 =========================================================================*/
 const schema = a.schema({
-  Todo: a
+  // Todo model removed
+    
+  Author: a
     .model({
-      content: a.string(),
+      name: a.string().required(),
+      articles: a.hasMany('News', 'authorId'),
+    })
+    .authorization((allow) => [allow.publicApiKey()]),
+    
+  Publisher: a
+    .model({
+      name: a.string().required(),
+      news: a.hasMany('News', 'publisherId'),
+    })
+    .authorization((allow) => [allow.publicApiKey()]),
+    
+  News: a
+    .model({
+      title: a.string().required(),
+      body: a.string().required(),
+      image: a.string(),
+      created_at: a.string(),
+      authorId: a.id(),
+      publisherId: a.id(),
+      author: a.belongsTo('Author', 'authorId'),
+      publisher: a.belongsTo('Publisher', 'publisherId'),
     })
     .authorization((allow) => [allow.publicApiKey()]),
 });
@@ -52,6 +73,6 @@ Fetch records from the database and use them in your frontend component.
 
 /* For example, in a React component, you can use this snippet in your
   function's RETURN statement */
-// const { data: todos } = await client.models.Todo.list()
+// const { data: news } = await client.models.News.list()
 
-// return <ul>{todos.map(todo => <li key={todo.id}>{todo.content}</li>)}</ul>
+// return <ul>{news.map(article => <li key={article.id}>{article.title}</li>)}</ul>
