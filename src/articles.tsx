@@ -35,6 +35,9 @@ function ArticlesPage() {
   const [newsModelAvailable, setNewsModelAvailable] = useState(false);
   const [authorModelAvailable, setAuthorModelAvailable] = useState(false);
   const [publisherModelAvailable, setPublisherModelAvailable] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [isDeleting, setIsDeleting] = useState<string | null>(null);
 
   useEffect(() => {
     // Check if models are available
@@ -46,8 +49,18 @@ function ArticlesPage() {
     let newsSubscription: Subscription | undefined;
     if (client.models.News) {
       newsSubscription = client.models.News.observeQuery().subscribe({
-        next: (data) => setNewsArticles([...data.items]),
+        next: (data) => {
+          setNewsArticles([...data.items]);
+          setIsLoading(false);
+        },
+        error: (error) => {
+          console.error("Error subscribing to News changes:", error);
+          setErrorMessage(`Failed to load articles: ${error instanceof Error ? error.message : "Unknown error"}`);
+          setIsLoading(false);
+        }
       });
+    } else {
+      setIsLoading(false);
     }
 
     // Load authors
@@ -58,6 +71,7 @@ function ArticlesPage() {
           setAuthors(authorResult.data);
         } catch (error) {
           console.error("Error loading authors:", error);
+          setErrorMessage(`Error loading authors: ${error instanceof Error ? error.message : "Unknown error"}`);
         }
       }
     }
@@ -70,6 +84,7 @@ function ArticlesPage() {
           setPublishers(publisherResult.data);
         } catch (error) {
           console.error("Error loading publishers:", error);
+          setErrorMessage(`Error loading publishers: ${error instanceof Error ? error.message : "Unknown error"}`);
         }
       }
     }
@@ -86,14 +101,20 @@ function ArticlesPage() {
   async function deleteNewsArticle(id: string) {
     if (!client.models.News) {
       console.error("News model is not available");
+      setErrorMessage("Unable to delete: News model is not available");
       return;
     }
     
     if (window.confirm("Are you sure you want to delete this article?")) {
       try {
+        setIsDeleting(id);
         await client.models.News.delete({ id });
+        // The subscription will handle updating the UI
       } catch (error) {
         console.error("Error deleting article:", error);
+        setErrorMessage(`Failed to delete article: ${error instanceof Error ? error.message : "Unknown error"}`);
+      } finally {
+        setIsDeleting(null);
       }
     }
   }
@@ -122,6 +143,22 @@ function ArticlesPage() {
     }
   };
 
+  // Check if content is a markdown-style image
+  const isMarkdownImage = (content: string): { isImage: boolean, url: string, alt: string } => {
+    const regex = /!\[(.*?)\]\((.*?)\)/;
+    const match = content.match(regex);
+    
+    if (match) {
+      return { 
+        isImage: true, 
+        url: match[2], 
+        alt: match[1] || 'Article image'
+      };
+    }
+    
+    return { isImage: false, url: '', alt: '' };
+  };
+
   // Safely render YouTube/Vimeo URLs as embedded iframes
   const getEmbedUrl = (url: string): string => {
     try {
@@ -145,13 +182,51 @@ function ArticlesPage() {
 
   // Component to render content blocks
   const ArticleContent = ({ article }: { article: NewsArticle }) => {
-    const contentBlocks = parseBlocks(article.body as string);
+    // Check if the body needs special handling for markdown-style images
+    const bodyContent = article.body as string;
     
-    // If no content blocks, just render the body as plain text
-    if (contentBlocks.length === 0) {
-      return <div className="prose">{article.body}</div>;
+    if (!bodyContent) {
+      return <div className="prose">No content</div>;
     }
     
+    // First try to parse as JSON for structured content blocks
+    const contentBlocks = parseBlocks(bodyContent);
+    
+    // If no content blocks, render with markdown image support
+    if (contentBlocks.length === 0) {
+      // Split by lines to handle markdown images
+      const lines = bodyContent.split('\n');
+      
+      return (
+        <div className="prose">
+          {lines.map((line, idx) => {
+            const imageCheck = isMarkdownImage(line);
+            
+            if (imageCheck.isImage) {
+              return (
+                <div key={idx} className="my-4 flex justify-center">
+                  <img 
+                    src={imageCheck.url} 
+                    alt={imageCheck.alt} 
+                    className="max-w-full h-auto rounded-md shadow-sm" 
+                    loading="lazy"
+                  />
+                </div>
+              );
+            }
+            
+            // If not an image, render as text with line breaks
+            return (
+              <div key={idx} className="my-1">
+                {line || <br />}
+              </div>
+            );
+          })}
+        </div>
+      );
+    }
+    
+    // If it's a structured content, use the original rendering
     return (
       <div className="space-y-6">
         {contentBlocks.map((block, index) => (
@@ -219,6 +294,26 @@ function ArticlesPage() {
           <h2 className="text-2xl font-semibold text-gray-800">Published Articles</h2>
         </div>
         
+        {/* Error message display */}
+        {errorMessage && (
+          <div className="mb-6 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            <div className="flex items-center gap-2">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-5 w-5 text-red-500">
+                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.28 7.22a.75.75 0 00-1.06 1.06L8.94 10l-1.72 1.72a.75.75 0 101.06 1.06L10 11.06l1.72 1.72a.75.75 0 101.06-1.06L11.06 10l1.72-1.72a.75.75 0 00-1.06-1.06L10 8.94 8.28 7.22z" clipRule="evenodd" />
+              </svg>
+              <p>{errorMessage}</p>
+              <button 
+                onClick={() => setErrorMessage(null)} 
+                className="ml-auto text-red-500 hover:text-red-700"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-5 w-5">
+                  <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" />
+                </svg>
+              </button>
+            </div>
+          </div>
+        )}
+        
         {(!newsModelAvailable || !authorModelAvailable || !publisherModelAvailable) ? (
           <div className="rounded-lg border border-amber-100 bg-amber-50 px-4 py-3 text-sm text-amber-700 mb-6">
             <div className="flex items-center gap-2">
@@ -227,6 +322,16 @@ function ArticlesPage() {
               </svg>
               <p>One or more models are not available. Please check your Amplify configuration.</p>
             </div>
+          </div>
+        ) : isLoading ? (
+          <div className="text-center py-16 px-4 bg-white border border-gray-200 rounded-lg">
+            <div className="flex justify-center">
+              <svg className="animate-spin h-8 w-8 text-blue-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+            </div>
+            <p className="mt-4 text-gray-600">Loading articles...</p>
           </div>
         ) : (
           <>
@@ -250,6 +355,17 @@ function ArticlesPage() {
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                 {newsArticles.map((article) => (
                   <div key={article.id} className="bg-white border border-gray-200 rounded-lg shadow-sm overflow-hidden">
+                    {article.image && (
+                      <div className="w-full h-56 overflow-hidden">
+                        <img 
+                          src={article.image as string}
+                          alt={article.title as string}
+                          className="w-full h-full object-cover"
+                          loading="lazy"
+                        />
+                      </div>
+                    )}
+                    
                     <div className="p-6">
                       <h3 className="text-xl font-semibold text-gray-900 mb-2">{article.title}</h3>
                       <div className="flex items-center text-sm text-gray-500 mb-5">
@@ -283,16 +399,6 @@ function ArticlesPage() {
                         )}
                       </div>
                       
-                      {article.image && (
-                        <div className="mb-4">
-                          <img 
-                            src={article.image as string}
-                            alt={article.title as string}
-                            className="w-full h-48 object-cover rounded-md"
-                          />
-                        </div>
-                      )}
-                      
                       <div className="mb-6 prose prose-gray max-w-none max-h-36 overflow-hidden relative">
                         <ArticleContent article={article} />
                         <div className="absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-white to-transparent"></div>
@@ -311,12 +417,25 @@ function ArticlesPage() {
                       </a>
                       <button 
                         onClick={() => deleteNewsArticle(article.id)} 
-                        className="flex-1 flex items-center justify-center py-3 text-sm font-medium text-gray-600 hover:text-red-600 hover:bg-gray-50"
+                        disabled={isDeleting === article.id}
+                        className="flex-1 flex items-center justify-center py-3 text-sm font-medium text-gray-600 hover:text-red-600 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
                       >
-                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-1.5" viewBox="0 0 20 20" fill="currentColor">
-                          <path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clipRule="evenodd" />
-                        </svg>
-                        Delete
+                        {isDeleting === article.id ? (
+                          <>
+                            <svg className="animate-spin h-5 w-5 mr-1.5 text-gray-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                            </svg>
+                            Deleting...
+                          </>
+                        ) : (
+                          <>
+                            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-1.5" viewBox="0 0 20 20" fill="currentColor">
+                              <path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clipRule="evenodd" />
+                            </svg>
+                            Delete
+                          </>
+                        )}
                       </button>
                     </div>
                   </div>
